@@ -5,3 +5,6 @@
 .*.cmd
 Module.symvers
 modules.order
+/vm/rootfs/
+/vm/initramfs.cpio
+/vm/vmlinuz
