@@ -38,17 +38,40 @@ static void edu_npu_test_exit(struct kunit *test)
 	pci_dev_put(ctx->pdev);
 }
 
-static void edu_npu_test_factorial_5(struct kunit *test)
+struct edu_npu_fact_case {
+	u32 n;
+	u32 expected;
+};
+
+static const struct edu_npu_fact_case edu_npu_fact_cases[] = {
+	{ .n = 0, .expected = 1 },
+	{ .n = 1, .expected = 1 },
+	{ .n = 5, .expected = 120 },
+	{ .n = 12, .expected = 479001600 },
+	/* 13!은 32비트를 넘으므로 2^32로 나눈 나머지가 나온다 */
+	{ .n = 13, .expected = 1932053504 },
+};
+
+static void edu_npu_fact_case_desc(const struct edu_npu_fact_case *c,
+				   char *desc)
 {
+	snprintf(desc, KUNIT_PARAM_DESC_SIZE, "%u!", c->n);
+}
+
+KUNIT_ARRAY_PARAM(edu_npu_fact, edu_npu_fact_cases, edu_npu_fact_case_desc);
+
+static void edu_npu_test_factorial(struct kunit *test)
+{
+	const struct edu_npu_fact_case *c = test->param_value;
 	struct edu_npu_test_ctx *ctx = test->priv;
 	u32 result;
 
-	KUNIT_ASSERT_EQ(test, edu_npu_factorial(ctx->regs, 5, &result), 0);
-	KUNIT_EXPECT_EQ(test, result, 120);
+	KUNIT_ASSERT_EQ(test, edu_npu_factorial(ctx->regs, c->n, &result), 0);
+	KUNIT_EXPECT_EQ(test, result, c->expected);
 }
 
 static struct kunit_case edu_npu_test_cases[] = {
-	KUNIT_CASE(edu_npu_test_factorial_5),
+	KUNIT_CASE_PARAM(edu_npu_test_factorial, edu_npu_fact_gen_params),
 	{ }
 };
 
