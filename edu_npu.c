@@ -2,6 +2,8 @@
 
 #include <linux/bitfield.h>
 #include <linux/bits.h>
+#include <linux/cleanup.h>
+#include <linux/container_of.h>
 #include <linux/dev_printk.h>
 #include <linux/device.h>
 #include <linux/err.h>
@@ -11,8 +13,12 @@
 #include <linux/miscdevice.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/pci.h>
 #include <linux/types.h>
+#include <linux/uaccess.h>
+
+#include "include/uapi/edu_npu.h"
 
 #define EDU_PCI_VENDOR_ID	0x1234
 #define EDU_PCI_DEVICE_ID	0x11e8
@@ -31,6 +37,7 @@
 
 struct edu_npu {
 	void __iomem *regs;
+	struct mutex lock; /* 디바이스에 작업을 한 번에 하나만 보낸다 */
 	struct miscdevice misc;
 };
 
@@ -68,8 +75,36 @@ static int edu_npu_factorial(void __iomem *regs, u32 n, u32 *result)
 	return 0;
 }
 
+static long edu_npu_ioctl(struct file *file, unsigned int cmd,
+			  unsigned long arg)
+{
+	struct edu_npu *npu = container_of(file->private_data, struct edu_npu,
+					   misc);
+	struct edu_npu_fact __user *uarg = (void __user *)arg;
+	struct edu_npu_fact req;
+	int ret;
+
+	if (cmd != EDU_NPU_IOC_FACT)
+		return -ENOTTY;
+
+	if (copy_from_user(&req, uarg, sizeof(req)))
+		return -EFAULT;
+
+	scoped_guard(mutex, &npu->lock)
+		ret = edu_npu_factorial(npu->regs, req.n, &req.result);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(uarg, &req, sizeof(req)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static const struct file_operations edu_npu_fops = {
 	.owner = THIS_MODULE,
+	.unlocked_ioctl = edu_npu_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
 };
 
 static void edu_npu_misc_deregister(void *data)
@@ -86,6 +121,10 @@ static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	npu = devm_kzalloc(&pdev->dev, sizeof(*npu), GFP_KERNEL);
 	if (!npu)
 		return -ENOMEM;
+
+	ret = devm_mutex_init(&pdev->dev, &npu->lock);
+	if (ret)
+		return ret;
 
 	ret = pcim_enable_device(pdev);
 	if (ret)
