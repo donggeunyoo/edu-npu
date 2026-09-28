@@ -89,3 +89,7 @@ module_pci_driver(edu_npu_driver);
 
 MODULE_DESCRIPTION("Driver for the QEMU edu PCI device");
 MODULE_LICENSE("GPL");
+
+#if IS_ENABLED(CONFIG_KUNIT)
+#include "tests/edu_npu_test.c"
+#endif
