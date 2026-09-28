@@ -2,8 +2,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "edu_npu.h"
@@ -64,6 +66,35 @@ TEST_F(edu_npu, readonly_request)
 	EXPECT_EQ(0U, req->result);
 
 	munmap(req, sizeof(*req));
+}
+
+TEST_F_TIMEOUT(edu_npu, timeout_then_recover, 90)
+{
+	struct edu_npu_fact req = { .n = UINT32_MAX };
+	struct timespec start, end;
+	int ret, err, tries;
+
+	ret = ioctl(self->fd, EDU_NPU_IOC_FACT, &req);
+	err = errno;
+	EXPECT_EQ(-1, ret);
+	EXPECT_EQ(ETIMEDOUT, err);
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	req.n = 5;
+	for (tries = 1; tries <= 600; tries++) {
+		ret = ioctl(self->fd, EDU_NPU_IOC_FACT, &req);
+		err = errno;
+		if (ret == 0 || err != ETIMEDOUT)
+			break;
+		usleep(100000);
+	}
+	clock_gettime(CLOCK_MONOTONIC, &end);
+
+	TH_LOG("recovered after %d tries, %ld ms", tries,
+	       (end.tv_sec - start.tv_sec) * 1000 +
+	       (end.tv_nsec - start.tv_nsec) / 1000000);
+	ASSERT_EQ(0, ret);
+	EXPECT_EQ(120U, req.result);
 }
 
 TEST_HARNESS_MAIN
