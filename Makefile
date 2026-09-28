@@ -14,11 +14,15 @@ all:
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
+	rm -f tools/edu-fact
 
-initramfs: all
+tools/edu-fact: tools/edu-fact.c include/uapi/edu_npu.h
+	$(CC) -static -O2 -Wall -Wextra -Werror -Iinclude/uapi -o $@ $<
+
+initramfs: all tools/edu-fact
 	rm -rf vm/rootfs
 	mkdir -p vm/rootfs/bin vm/rootfs/dev vm/rootfs/proc vm/rootfs/sys
-	cp /usr/bin/busybox vm/rootfs/bin/
+	cp /usr/bin/busybox tools/edu-fact vm/rootfs/bin/
 	cp vm/init edu_npu.ko vm/rootfs/
 	cd vm/rootfs && find . | cpio -o -H newc --quiet > ../initramfs.cpio
 

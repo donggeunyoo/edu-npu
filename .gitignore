@@ -8,3 +8,4 @@ modules.order
 /vm/rootfs/
 /vm/initramfs.cpio
 /vm/vmlinuz
+/tools/edu-fact
