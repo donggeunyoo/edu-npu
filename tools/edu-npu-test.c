@@ -53,6 +53,19 @@ static int edu_npu_sysfs_write(const char *path, const char *val)
 	return ret < 0 ? -1 : 0;
 }
 
+static char *edu_npu_bdf(char *buf, size_t size)
+{
+	ssize_t len;
+	char *slash;
+
+	len = readlink("/sys/class/misc/edu_npu/device", buf, size - 1);
+	if (len <= 0)
+		return NULL;
+	buf[len] = '\0';
+	slash = strrchr(buf, '/');
+	return slash ? slash + 1 : NULL;
+}
+
 FIXTURE(edu_npu)
 {
 	int fd;
@@ -164,14 +177,10 @@ TEST_F(edu_npu, unbind_while_open)
 {
 	struct edu_npu_fact req = { .n = 5 };
 	char link[PATH_MAX], *bdf;
-	ssize_t len;
 	int ret, err;
 
-	len = readlink("/sys/class/misc/edu_npu/device", link,
-		       sizeof(link) - 1);
-	ASSERT_LT(0, len);
-	link[len] = '\0';
-	bdf = strrchr(link, '/') + 1;
+	bdf = edu_npu_bdf(link, sizeof(link));
+	ASSERT_TRUE(!!bdf);
 
 	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/unbind",
 					 bdf));
@@ -184,6 +193,33 @@ TEST_F(edu_npu, unbind_while_open)
 
 	EXPECT_EQ(-1, ret);
 	EXPECT_EQ(ENODEV, err);
+}
+
+TEST_F(edu_npu, old_fd_after_rebind)
+{
+	struct edu_npu_fact req = { .n = 5 };
+	char link[PATH_MAX], *bdf;
+	int fd, ret, err;
+
+	bdf = edu_npu_bdf(link, sizeof(link));
+	ASSERT_TRUE(!!bdf);
+
+	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/unbind",
+					 bdf));
+	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/bind",
+					 bdf));
+
+	ret = ioctl(self->fd, EDU_NPU_IOC_FACT, &req);
+	err = errno;
+	EXPECT_EQ(-1, ret);
+	EXPECT_EQ(ENODEV, err);
+
+	fd = open("/dev/edu_npu", O_RDWR);
+	ASSERT_LE(0, fd);
+	req.result = 0;
+	EXPECT_EQ(0, ioctl(fd, EDU_NPU_IOC_FACT, &req));
+	EXPECT_EQ(120U, req.result);
+	close(fd);
 }
 
 TEST_HARNESS_MAIN
