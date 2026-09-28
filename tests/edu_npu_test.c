@@ -96,6 +96,7 @@ static struct kunit_suite edu_npu_test_suite = {
 	.exit = edu_npu_test_exit,
 	.test_cases = edu_npu_test_cases,
 };
+
 static void edu_npu_test_factorial_timeout(struct kunit *test)
 {
 	void __iomem *regs;
