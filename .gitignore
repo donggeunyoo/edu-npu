@@ -10,3 +10,4 @@ modules.order
 /vm/vmlinuz
 /tools/edu-fact
 /tools/edu-npu-test
+/tools/edu-npu-test32

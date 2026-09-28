@@ -83,7 +83,7 @@ TEST_F(edu_npu, readonly_request)
 
 	req = mmap(NULL, sizeof(*req), PROT_READ | PROT_WRITE,
 		   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	ASSERT_NE(MAP_FAILED, req);
+	ASSERT_TRUE(req != MAP_FAILED);
 	req->n = 5;
 	ASSERT_EQ(0, mprotect(req, sizeof(*req), PROT_READ));
 

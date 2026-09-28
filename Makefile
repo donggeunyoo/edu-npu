@@ -15,7 +15,7 @@ all:
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) clean
-	rm -f tools/edu-fact tools/edu-npu-test
+	rm -f tools/edu-fact tools/edu-npu-test tools/edu-npu-test32
 
 tools/edu-fact: tools/edu-fact.c include/uapi/edu_npu.h
 	$(CC) -static -O2 -Wall -Wextra -Werror -Iinclude/uapi -o $@ $<
@@ -24,10 +24,15 @@ tools/edu-npu-test: tools/edu-npu-test.c include/uapi/edu_npu.h
 	$(CC) -static -O2 -Wall -Wextra -Werror -Iinclude/uapi -I$(KSFT_DIR) \
 		-o $@ $<
 
-initramfs: all tools/edu-fact tools/edu-npu-test
+tools/edu-npu-test32: tools/edu-npu-test.c include/uapi/edu_npu.h
+	$(CC) -m32 -static -O2 -Wall -Wextra -Werror -Iinclude/uapi \
+		-I$(KSFT_DIR) -o $@ $<
+
+initramfs: all tools/edu-fact tools/edu-npu-test tools/edu-npu-test32
 	rm -rf vm/rootfs
 	mkdir -p vm/rootfs/bin vm/rootfs/dev vm/rootfs/proc vm/rootfs/sys
-	cp /usr/bin/busybox tools/edu-fact tools/edu-npu-test vm/rootfs/bin/
+	cp /usr/bin/busybox tools/edu-fact tools/edu-npu-test \
+		tools/edu-npu-test32 vm/rootfs/bin/
 	cp vm/init edu_npu.ko vm/rootfs/
 	cd vm/rootfs && find . | cpio -o -H newc --quiet > ../initramfs.cpio
 
