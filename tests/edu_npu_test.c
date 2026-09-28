@@ -81,4 +81,29 @@ static struct kunit_suite edu_npu_test_suite = {
 	.exit = edu_npu_test_exit,
 	.test_cases = edu_npu_test_cases,
 };
-kunit_test_suite(edu_npu_test_suite);
+static void edu_npu_test_factorial_timeout(struct kunit *test)
+{
+	void __iomem *regs;
+	u32 *fake, result = 0xdeadbeef;
+
+	fake = kunit_kzalloc(test, EDU_REG_STATUS + sizeof(u32), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, fake);
+	fake[EDU_REG_STATUS / sizeof(u32)] = EDU_STATUS_COMPUTING;
+	regs = (void __force __iomem *)fake;
+
+	KUNIT_EXPECT_EQ(test, edu_npu_factorial(regs, 5, &result), -ETIMEDOUT);
+	KUNIT_EXPECT_EQ(test, result, 0xdeadbeef);
+	KUNIT_EXPECT_EQ(test, fake[EDU_REG_FACT / sizeof(u32)], 5);
+}
+
+static struct kunit_case edu_npu_fake_test_cases[] = {
+	KUNIT_CASE(edu_npu_test_factorial_timeout),
+	{ }
+};
+
+static struct kunit_suite edu_npu_fake_test_suite = {
+	.name = "edu_npu_fake",
+	.test_cases = edu_npu_fake_test_cases,
+};
+
+kunit_test_suites(&edu_npu_test_suite, &edu_npu_fake_test_suite);
