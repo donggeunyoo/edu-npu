@@ -2,6 +2,8 @@
 
 #include <kunit/test.h>
 
+#define EDU_NPU_TEST_BUSY_N	1000000
+
 struct edu_npu_test_ctx {
 	struct pci_dev *pdev;
 	void __iomem *regs;
@@ -69,8 +71,22 @@ static void edu_npu_test_factorial(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, result, c->expected);
 }
 
+static void edu_npu_test_factorial_busy(struct kunit *test)
+{
+	struct edu_npu_test_ctx *ctx = test->priv;
+	u32 result;
+
+	iowrite32(EDU_NPU_TEST_BUSY_N, ctx->regs + EDU_REG_FACT);
+	KUNIT_ASSERT_TRUE(test, ioread32(ctx->regs + EDU_REG_STATUS) &
+			  EDU_STATUS_COMPUTING);
+
+	KUNIT_ASSERT_EQ(test, edu_npu_factorial(ctx->regs, 5, &result), 0);
+	KUNIT_EXPECT_EQ(test, result, 120);
+}
+
 static struct kunit_case edu_npu_test_cases[] = {
 	KUNIT_CASE_PARAM(edu_npu_test_factorial, edu_npu_fact_gen_params),
+	KUNIT_CASE(edu_npu_test_factorial_busy),
 	{ }
 };
 
