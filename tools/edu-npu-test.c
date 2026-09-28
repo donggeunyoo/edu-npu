@@ -2,8 +2,10 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -37,6 +39,18 @@ static int edu_npu_worker(int fd, int id)
 		fprintf(stderr, "# worker %d: %d/%d wrong\n", id, wrong,
 			EDU_NPU_TEST_ROUNDS);
 	return wrong ? 1 : 0;
+}
+
+static int edu_npu_sysfs_write(const char *path, const char *val)
+{
+	int fd, ret;
+
+	fd = open(path, O_WRONLY);
+	if (fd < 0)
+		return -1;
+	ret = write(fd, val, strlen(val));
+	close(fd);
+	return ret < 0 ? -1 : 0;
 }
 
 FIXTURE(edu_npu)
@@ -144,6 +158,32 @@ TEST_F(edu_npu, concurrent_requests)
 	}
 
 	EXPECT_EQ(0, failed);
+}
+
+TEST_F(edu_npu, unbind_while_open)
+{
+	struct edu_npu_fact req = { .n = 5 };
+	char link[PATH_MAX], *bdf;
+	ssize_t len;
+	int ret, err;
+
+	len = readlink("/sys/class/misc/edu_npu/device", link,
+		       sizeof(link) - 1);
+	ASSERT_LT(0, len);
+	link[len] = '\0';
+	bdf = strrchr(link, '/') + 1;
+
+	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/unbind",
+					 bdf));
+
+	ret = ioctl(self->fd, EDU_NPU_IOC_FACT, &req);
+	err = errno;
+
+	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/bind",
+					 bdf));
+
+	EXPECT_EQ(-1, ret);
+	EXPECT_EQ(ENODEV, err);
 }
 
 TEST_HARNESS_MAIN
