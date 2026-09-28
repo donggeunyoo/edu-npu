@@ -92,7 +92,7 @@ static void edu_npu_test_factorial_timeout(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, edu_npu_factorial(regs, 5, &result), -ETIMEDOUT);
 	KUNIT_EXPECT_EQ(test, result, 0xdeadbeef);
-	KUNIT_EXPECT_EQ(test, fake[EDU_REG_FACT / sizeof(u32)], 5);
+	KUNIT_EXPECT_EQ(test, fake[EDU_REG_FACT / sizeof(u32)], 0);
 }
 
 static struct kunit_case edu_npu_fake_test_cases[] = {

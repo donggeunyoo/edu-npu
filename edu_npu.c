@@ -32,17 +32,27 @@ static const struct pci_device_id edu_npu_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, edu_npu_ids);
 
-static int edu_npu_factorial(void __iomem *regs, u32 n, u32 *result)
+static int edu_npu_wait_idle(void __iomem *regs)
 {
 	u32 status;
+
+	return read_poll_timeout(ioread32, status,
+				 !(status & EDU_STATUS_COMPUTING),
+				 EDU_FACT_POLL_US, EDU_FACT_TIMEOUT_US, false,
+				 regs + EDU_REG_STATUS);
+}
+
+static int edu_npu_factorial(void __iomem *regs, u32 n, u32 *result)
+{
 	int ret;
+
+	ret = edu_npu_wait_idle(regs);
+	if (ret)
+		return ret;
 
 	iowrite32(n, regs + EDU_REG_FACT);
 
-	ret = read_poll_timeout(ioread32, status,
-				!(status & EDU_STATUS_COMPUTING),
-				EDU_FACT_POLL_US, EDU_FACT_TIMEOUT_US, false,
-				regs + EDU_REG_STATUS);
+	ret = edu_npu_wait_idle(regs);
 	if (ret)
 		return ret;
 
