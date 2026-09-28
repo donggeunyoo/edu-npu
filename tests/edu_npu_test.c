@@ -48,7 +48,6 @@ static const struct edu_npu_fact_case edu_npu_fact_cases[] = {
 	{ .n = 1, .expected = 1 },
 	{ .n = 5, .expected = 120 },
 	{ .n = 12, .expected = 479001600 },
-	/* 13!은 32비트를 넘으므로 2^32로 나눈 나머지가 나온다 */
 	{ .n = 13, .expected = 1932053504 },
 };
 
