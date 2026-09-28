@@ -66,6 +66,35 @@ static char *edu_npu_bdf(char *buf, size_t size)
 	return slash ? slash + 1 : NULL;
 }
 
+static int edu_npu_rebind(const char *bdf)
+{
+	int tries;
+
+	for (tries = 0; tries < 20; tries++) {
+		if (!edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/bind",
+					 bdf))
+			return 0;
+		usleep(500000);
+	}
+	return -1;
+}
+
+static int edu_npu_hammer(int fd)
+{
+	struct edu_npu_fact req = { .n = 5 };
+	int busy = 0;
+
+	for (;;) {
+		if (!ioctl(fd, EDU_NPU_IOC_FACT, &req))
+			return 2;
+		if (errno == ENODEV)
+			return busy ? 0 : 3;
+		if (errno != ETIMEDOUT)
+			return 4;
+		busy++;
+	}
+}
+
 FIXTURE(edu_npu)
 {
 	int fd;
@@ -220,6 +249,33 @@ TEST_F(edu_npu, old_fd_after_rebind)
 	EXPECT_EQ(0, ioctl(fd, EDU_NPU_IOC_FACT, &req));
 	EXPECT_EQ(120U, req.result);
 	close(fd);
+}
+
+TEST_F_TIMEOUT(edu_npu, unbind_while_busy, 60)
+{
+	struct edu_npu_fact req = { .n = UINT32_MAX };
+	char link[PATH_MAX], *bdf;
+	int status;
+	pid_t pid;
+
+	bdf = edu_npu_bdf(link, sizeof(link));
+	ASSERT_TRUE(!!bdf);
+
+	ASSERT_EQ(-1, ioctl(self->fd, EDU_NPU_IOC_FACT, &req));
+
+	pid = fork();
+	ASSERT_LE(0, pid);
+	if (!pid)
+		_exit(edu_npu_hammer(self->fd));
+
+	usleep(100000);
+	ASSERT_EQ(0, edu_npu_sysfs_write("/sys/bus/pci/drivers/edu_npu/unbind",
+					 bdf));
+	ASSERT_EQ(pid, waitpid(pid, &status, 0));
+	ASSERT_EQ(0, edu_npu_rebind(bdf));
+
+	ASSERT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
 }
 
 TEST_HARNESS_MAIN
