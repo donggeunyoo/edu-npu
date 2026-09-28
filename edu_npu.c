@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/err.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
