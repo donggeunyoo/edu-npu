@@ -3,9 +3,12 @@
 #include <linux/bitfield.h>
 #include <linux/bits.h>
 #include <linux/dev_printk.h>
+#include <linux/device.h>
 #include <linux/err.h>
+#include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
+#include <linux/miscdevice.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -25,6 +28,11 @@
 
 #define EDU_FACT_POLL_US	10
 #define EDU_FACT_TIMEOUT_US	10000
+
+struct edu_npu {
+	void __iomem *regs;
+	struct miscdevice misc;
+};
 
 static const struct pci_device_id edu_npu_ids[] = {
 	{ PCI_DEVICE(EDU_PCI_VENDOR_ID, EDU_PCI_DEVICE_ID) },
@@ -60,34 +68,57 @@ static int edu_npu_factorial(void __iomem *regs, u32 n, u32 *result)
 	return 0;
 }
 
+static const struct file_operations edu_npu_fops = {
+	.owner = THIS_MODULE,
+};
+
+static void edu_npu_misc_deregister(void *data)
+{
+	misc_deregister(data);
+}
+
 static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-	void __iomem *regs;
+	struct edu_npu *npu;
 	u32 ident, fact;
 	int ret;
+
+	npu = devm_kzalloc(&pdev->dev, sizeof(*npu), GFP_KERNEL);
+	if (!npu)
+		return -ENOMEM;
 
 	ret = pcim_enable_device(pdev);
 	if (ret)
 		return ret;
 
-	regs = pcim_iomap_region(pdev, 0, KBUILD_MODNAME);
-	if (IS_ERR(regs))
-		return PTR_ERR(regs);
+	npu->regs = pcim_iomap_region(pdev, 0, KBUILD_MODNAME);
+	if (IS_ERR(npu->regs))
+		return PTR_ERR(npu->regs);
 
-	ident = ioread32(regs + EDU_REG_ID);
+	ident = ioread32(npu->regs + EDU_REG_ID);
 	if (FIELD_GET(EDU_ID_MAGIC, ident) != EDU_ID_MAGIC_VAL)
 		return -ENODEV;
 
 	dev_info(&pdev->dev, "edu v%lu.%lu\n",
 		 FIELD_GET(EDU_ID_MAJOR, ident), FIELD_GET(EDU_ID_MINOR, ident));
 
-	ret = edu_npu_factorial(regs, 5, &fact);
+	ret = edu_npu_factorial(npu->regs, 5, &fact);
 	if (ret)
 		return ret;
 
 	dev_info(&pdev->dev, "5! = %u\n", fact);
 
-	return 0;
+	npu->misc.minor = MISC_DYNAMIC_MINOR;
+	npu->misc.name = KBUILD_MODNAME;
+	npu->misc.fops = &edu_npu_fops;
+	npu->misc.parent = &pdev->dev;
+
+	ret = misc_register(&npu->misc);
+	if (ret)
+		return ret;
+
+	return devm_add_action_or_reset(&pdev->dev, edu_npu_misc_deregister,
+					&npu->misc);
 }
 
 static struct pci_driver edu_npu_driver = {
