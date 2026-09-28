@@ -2,11 +2,9 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
-#include <linux/init.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/printk.h>
 
 #define EDU_PCI_VENDOR_ID	0x1234
 #define EDU_PCI_DEVICE_ID	0x11e8
@@ -17,18 +15,17 @@ static const struct pci_device_id edu_npu_ids[] = {
 };
 MODULE_DEVICE_TABLE(pci, edu_npu_ids);
 
-static int __init edu_npu_init(void)
+static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
-	pr_info("loaded\n");
-	return 0;
+	return pcim_enable_device(pdev);
 }
-module_init(edu_npu_init);
 
-static void __exit edu_npu_exit(void)
-{
-	pr_info("unloaded\n");
-}
-module_exit(edu_npu_exit);
+static struct pci_driver edu_npu_driver = {
+	.name = KBUILD_MODNAME,
+	.id_table = edu_npu_ids,
+	.probe = edu_npu_probe,
+};
+module_pci_driver(edu_npu_driver);
 
 MODULE_DESCRIPTION("Driver for the QEMU edu PCI device");
 MODULE_LICENSE("GPL");
