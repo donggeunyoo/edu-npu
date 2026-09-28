@@ -3,13 +3,41 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "edu_npu.h"
 #include "kselftest_harness.h"
+
+#define EDU_NPU_TEST_WORKERS	4
+#define EDU_NPU_TEST_ROUNDS	2000
+
+static const __u32 edu_npu_fact_table[] = {
+	1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880, 3628800, 39916800,
+	479001600,
+};
+
+static int edu_npu_worker(int fd, int id)
+{
+	struct edu_npu_fact req;
+	int round, wrong = 0;
+
+	for (round = 0; round < EDU_NPU_TEST_ROUNDS; round++) {
+		req.n = (id + round) % ARRAY_SIZE(edu_npu_fact_table);
+		if (ioctl(fd, EDU_NPU_IOC_FACT, &req) ||
+		    req.result != edu_npu_fact_table[req.n])
+			wrong++;
+	}
+
+	if (wrong)
+		fprintf(stderr, "# worker %d: %d/%d wrong\n", id, wrong,
+			EDU_NPU_TEST_ROUNDS);
+	return wrong ? 1 : 0;
+}
 
 FIXTURE(edu_npu)
 {
@@ -95,6 +123,27 @@ TEST_F_TIMEOUT(edu_npu, timeout_then_recover, 90)
 	       (end.tv_nsec - start.tv_nsec) / 1000000);
 	ASSERT_EQ(0, ret);
 	EXPECT_EQ(120U, req.result);
+}
+
+TEST_F(edu_npu, concurrent_requests)
+{
+	pid_t pids[EDU_NPU_TEST_WORKERS];
+	int i, status, failed = 0;
+
+	for (i = 0; i < EDU_NPU_TEST_WORKERS; i++) {
+		pids[i] = fork();
+		ASSERT_LE(0, pids[i]);
+		if (!pids[i])
+			_exit(edu_npu_worker(self->fd, i));
+	}
+
+	for (i = 0; i < EDU_NPU_TEST_WORKERS; i++) {
+		ASSERT_EQ(pids[i], waitpid(pids[i], &status, 0));
+		ASSERT_TRUE(WIFEXITED(status));
+		failed += WEXITSTATUS(status);
+	}
+
+	EXPECT_EQ(0, failed);
 }
 
 TEST_HARNESS_MAIN

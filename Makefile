@@ -32,7 +32,7 @@ initramfs: all tools/edu-fact tools/edu-npu-test
 	cd vm/rootfs && find . | cpio -o -H newc --quiet > ../initramfs.cpio
 
 run: initramfs
-	qemu-system-x86_64 -enable-kvm -cpu host -m 512M -nographic -no-reboot \
+	qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 512M -nographic -no-reboot \
 	-kernel vm/vmlinuz -initrd vm/initramfs.cpio \
 	-append "console=ttyS0 panic=-1" \
 	-device edu
