@@ -10,11 +10,13 @@
 #include <linux/fs.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
+#include <linux/kref.h>
 #include <linux/miscdevice.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
@@ -36,8 +38,9 @@
 #define EDU_FACT_TIMEOUT_US	10000
 
 struct edu_npu {
+	struct kref ref;
 	void __iomem *regs;
-	struct mutex lock; /* 디바이스에 작업을 한 번에 하나만 보낸다 */
+	struct mutex lock; /* regs와 디바이스에 보내는 작업을 보호한다 */
 	struct miscdevice misc;
 };
 
@@ -75,11 +78,50 @@ static int edu_npu_factorial(void __iomem *regs, u32 n, u32 *result)
 	return 0;
 }
 
-static long edu_npu_ioctl(struct file *file, unsigned int cmd,
-			  unsigned long arg)
+static void edu_npu_free(struct kref *ref)
+{
+	struct edu_npu *npu = container_of(ref, struct edu_npu, ref);
+
+	mutex_destroy(&npu->lock);
+	kfree(npu);
+}
+
+static void edu_npu_put(void *data)
+{
+	struct edu_npu *npu = data;
+
+	kref_put(&npu->ref, edu_npu_free);
+}
+
+static void edu_npu_unregister(void *data)
+{
+	struct edu_npu *npu = data;
+
+	misc_deregister(&npu->misc);
+	scoped_guard(mutex, &npu->lock)
+		npu->regs = NULL;
+}
+
+static int edu_npu_open(struct inode *inode, struct file *file)
 {
 	struct edu_npu *npu = container_of(file->private_data, struct edu_npu,
 					   misc);
+
+	kref_get(&npu->ref);
+	file->private_data = npu;
+	return 0;
+}
+
+static int edu_npu_release(struct inode *inode, struct file *file)
+{
+	edu_npu_put(file->private_data);
+	return 0;
+}
+
+static long edu_npu_ioctl(struct file *file, unsigned int cmd,
+			  unsigned long arg)
+{
+	struct edu_npu *npu = file->private_data;
 	struct edu_npu_fact __user *uarg = (void __user *)arg;
 	struct edu_npu_fact req;
 	int ret;
@@ -90,8 +132,13 @@ static long edu_npu_ioctl(struct file *file, unsigned int cmd,
 	if (copy_from_user(&req, uarg, sizeof(req)))
 		return -EFAULT;
 
-	scoped_guard(mutex, &npu->lock)
-		ret = edu_npu_factorial(npu->regs, req.n, &req.result);
+	scoped_guard(mutex, &npu->lock) {
+		if (!npu->regs)
+			ret = -ENODEV;
+		else
+			ret = edu_npu_factorial(npu->regs, req.n,
+						&req.result);
+	}
 	if (ret)
 		return ret;
 
@@ -103,26 +150,26 @@ static long edu_npu_ioctl(struct file *file, unsigned int cmd,
 
 static const struct file_operations edu_npu_fops = {
 	.owner = THIS_MODULE,
+	.open = edu_npu_open,
+	.release = edu_npu_release,
 	.unlocked_ioctl = edu_npu_ioctl,
 	.compat_ioctl = compat_ptr_ioctl,
 };
 
-static void edu_npu_misc_deregister(void *data)
-{
-	misc_deregister(data);
-}
-
 static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct edu_npu *npu;
+	void __iomem *regs;
 	u32 ident, fact;
 	int ret;
 
-	npu = devm_kzalloc(&pdev->dev, sizeof(*npu), GFP_KERNEL);
+	npu = kzalloc_obj(*npu);
 	if (!npu)
 		return -ENOMEM;
+	kref_init(&npu->ref);
+	mutex_init(&npu->lock);
 
-	ret = devm_mutex_init(&pdev->dev, &npu->lock);
+	ret = devm_add_action_or_reset(&pdev->dev, edu_npu_put, npu);
 	if (ret)
 		return ret;
 
@@ -130,23 +177,24 @@ static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		return ret;
 
-	npu->regs = pcim_iomap_region(pdev, 0, KBUILD_MODNAME);
-	if (IS_ERR(npu->regs))
-		return PTR_ERR(npu->regs);
+	regs = pcim_iomap_region(pdev, 0, KBUILD_MODNAME);
+	if (IS_ERR(regs))
+		return PTR_ERR(regs);
 
-	ident = ioread32(npu->regs + EDU_REG_ID);
+	ident = ioread32(regs + EDU_REG_ID);
 	if (FIELD_GET(EDU_ID_MAGIC, ident) != EDU_ID_MAGIC_VAL)
 		return -ENODEV;
 
 	dev_info(&pdev->dev, "edu v%lu.%lu\n",
 		 FIELD_GET(EDU_ID_MAJOR, ident), FIELD_GET(EDU_ID_MINOR, ident));
 
-	ret = edu_npu_factorial(npu->regs, 5, &fact);
+	ret = edu_npu_factorial(regs, 5, &fact);
 	if (ret)
 		return ret;
 
 	dev_info(&pdev->dev, "5! = %u\n", fact);
 
+	npu->regs = regs;
 	npu->misc.minor = MISC_DYNAMIC_MINOR;
 	npu->misc.name = KBUILD_MODNAME;
 	npu->misc.fops = &edu_npu_fops;
@@ -156,8 +204,8 @@ static int edu_npu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		return ret;
 
-	return devm_add_action_or_reset(&pdev->dev, edu_npu_misc_deregister,
-					&npu->misc);
+	return devm_add_action_or_reset(&pdev->dev, edu_npu_unregister,
+					npu);
 }
 
 static struct pci_driver edu_npu_driver = {
